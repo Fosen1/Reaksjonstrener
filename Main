@@ -1,0 +1,201 @@
+#if CONFIG_FREERTOS_UNICORE
+  static const BaseType_t app_cpu = 0;
+#else
+  static const BaseType_t app_cpu = 1;
+#endif
+
+const int maxButtons = 4;
+const int btnPin[maxButtons] = {13, 12, 14, 27};
+const int ledPin[maxButtons] = {32, 33, 25, 26};
+
+static SemaphoreHandle_t binSem;
+static SemaphoreHandle_t delayMutex;
+static SemaphoreHandle_t gameMutex;
+
+static TaskHandle_t interactorTask[maxButtons];
+static TaskHandle_t randomLedTask = NULL;
+
+int userDelay = 2000;
+int lives = 3;
+int activeButtons = 4;
+int score = 0;
+unsigned long gameStartTime;
+bool gameOver = false;
+bool gameRunning = false;
+
+// For å vite hvilken LED som er aktiv
+int currentActiveLed = -1;
+
+
+void IRAM_ATTR ISR_BTN1() { BaseType_t t = pdFALSE; vTaskNotifyGiveFromISR(interactorTask[0], &t); if (t) portYIELD_FROM_ISR(); }
+void IRAM_ATTR ISR_BTN2() { BaseType_t t = pdFALSE; vTaskNotifyGiveFromISR(interactorTask[1], &t); if (t) portYIELD_FROM_ISR(); }
+void IRAM_ATTR ISR_BTN3() { BaseType_t t = pdFALSE; vTaskNotifyGiveFromISR(interactorTask[2], &t); if (t) portYIELD_FROM_ISR(); }
+void IRAM_ATTR ISR_BTN4() { BaseType_t t = pdFALSE; vTaskNotifyGiveFromISR(interactorTask[3], &t); if (t) portYIELD_FROM_ISR(); }
+
+void interactor(void *parameters) {
+  int id = *(int *)parameters;
+  xSemaphoreGive(binSem);
+  while (1) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    digitalWrite(ledPin[id], LOW);
+    xTaskNotifyGive(randomLedTask);
+  }
+}
+
+// ------- Tilfeldig Blinking -------
+void randomLedFunction(void *params) {
+  while (1) {
+    if (!gameRunning) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
+    int delayTime;
+    xSemaphoreTake(delayMutex, portMAX_DELAY);
+    delayTime = userDelay;
+    xSemaphoreGive(delayMutex);
+
+    vTaskDelay(pdMS_TO_TICKS(delayTime));
+
+    int ledId = random(0, activeButtons);
+    currentActiveLed = ledId;
+    digitalWrite(ledPin[ledId], HIGH);
+    Serial.print("LED "); 
+    Serial.print(ledId);
+     Serial.println(" på.");
+
+    BaseType_t res = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000)); //2 sekunder
+    if (res == 0) {
+      // Ikke trykket i tide
+      digitalWrite(ledPin[ledId], LOW);  
+      Serial.println("For treg! LED slått av.");
+
+      xSemaphoreTake(gameMutex, portMAX_DELAY);
+      lives--;
+      xSemaphoreGive(gameMutex);
+
+      Serial.print("Liv igjen: "); 
+      Serial.println(lives);
+    } else {
+      xSemaphoreTake(gameMutex, portMAX_DELAY);
+      score++;
+      xSemaphoreGive(gameMutex);
+      Serial.print("Riktig! Poeng: "); 
+      Serial.println(score);
+    }
+
+    if (lives <= 0) {
+      xSemaphoreTake(gameMutex, portMAX_DELAY);
+      gameOver = true;
+      gameRunning = false;
+      unsigned long t = millis() - gameStartTime;
+      Serial.println("Du tapte!");
+      Serial.print("Tid overlevd: "); 
+      Serial.print(t); 
+      Serial.println(" ms");
+      Serial.print("Poeng: "); 
+      Serial.println(score);
+      Serial.println("Skriv 'RESTART' for å prøve igjen.");
+      xSemaphoreGive(gameMutex);
+    }
+  }
+}
+
+// ---------- Terminal + input ----------
+enum SetupState {WAIT_LED, WAIT_DELAY, WAIT_LIVES, READY};
+SetupState setupState = WAIT_LED;
+
+void terminalInputTask(void *params) {
+  String input;
+  while (1) {
+    if (Serial.available()) {
+      input = Serial.readStringUntil('\n');
+      input.trim();
+
+      if (gameOver && input == "RESTART") {
+        //Restart alt
+        setupState = WAIT_LED;
+        gameOver = false;
+        gameRunning = false;
+        score = 0;
+        lives = 3;
+        userDelay = 2000;
+        Serial.println("Nytt spill! Velg antall LED (1–4):");
+        continue;
+      }
+
+      if (!gameRunning && !gameOver) {
+        int val = input.toInt();
+        switch (setupState) {
+          case WAIT_LED:
+            if (val >= 1 && val <= 4) {
+              activeButtons = val;
+              Serial.print("Antall LED valgt: "); Serial.println(activeButtons);
+              setupState = WAIT_DELAY;
+              Serial.println("Skriv ønsket forsinkelse (ms, 500–10000):");
+            } else Serial.println("Ugyldig (1–4). Prøv igjen:");
+            break;
+          case WAIT_DELAY:
+            if (val >= 500 && val <= 10000) {
+              xSemaphoreTake(delayMutex, portMAX_DELAY);
+              userDelay = val;
+              xSemaphoreGive(delayMutex);
+              Serial.print("Forsinkelse: "); Serial.print(userDelay); Serial.println(" ms");
+              setupState = WAIT_LIVES;
+              Serial.println("Skriv antall liv (1–10):");
+            } else Serial.println("Ugyldig (500–10000). Prøv igjen:");
+            break;
+          case WAIT_LIVES:
+            if (val >= 1 && val <= 10) {
+              xSemaphoreTake(gameMutex, portMAX_DELAY);
+              lives = val;
+              score = 0;
+              gameOver = false;
+              gameRunning = true;
+              gameStartTime = millis();
+              xSemaphoreGive(gameMutex);
+              Serial.println("Spillet starter!");
+            } else Serial.println("Ugyldig (1–10). Prøv igjen:");
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(115200);
+  Serial.println("--- FreeRTOS Reaksjonsspill ---");
+  Serial.println("Velg antall LED som skal brukes (1–4):");
+
+  binSem = xSemaphoreCreateBinary();
+  delayMutex = xSemaphoreCreateMutex();
+  gameMutex = xSemaphoreCreateMutex();
+
+  for (int i = 0; i < maxButtons; i++) {
+    pinMode(btnPin[i], INPUT_PULLUP);
+    pinMode(ledPin[i], OUTPUT);
+  }
+
+  attachInterrupt(btnPin[0], ISR_BTN1, FALLING);
+  attachInterrupt(btnPin[1], ISR_BTN2, FALLING);
+  attachInterrupt(btnPin[2], ISR_BTN3, FALLING);
+  attachInterrupt(btnPin[3], ISR_BTN4, FALLING);
+
+  for (int i = 0; i < maxButtons; i++) {
+    char name[14];
+    sprintf(name, "Interactor %i", i);
+    xTaskCreatePinnedToCore(interactor, name, 1024, (void *)&i, 1, &interactorTask[i], app_cpu);
+    xSemaphoreTake(binSem, portMAX_DELAY);
+  }
+
+  xTaskCreatePinnedToCore(randomLedFunction, "Random LED", 2048, NULL, 1, &randomLedTask, app_cpu);
+  xTaskCreatePinnedToCore(terminalInputTask, "Terminal Input", 2048, NULL, 1, NULL, app_cpu);
+}
+
+void loop() {
+}
