@@ -42,7 +42,7 @@ void interactor(void *parameters) {
   }
 }
 
-// ------- Tilfeldig Blinking -------
+
 void randomLedFunction(void *params) {
   while (1) {
     if (!gameRunning) {
@@ -62,7 +62,7 @@ void randomLedFunction(void *params) {
     digitalWrite(ledPin[ledId], HIGH);
     Serial.print("LED "); 
     Serial.print(ledId);
-     Serial.println(" på.");
+    Serial.println(" på.");
 
     BaseType_t res = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000)); //2 sekunder
     if (res == 0) {
@@ -101,7 +101,7 @@ void randomLedFunction(void *params) {
   }
 }
 
-// ---------- Terminal + input ----------
+
 enum SetupState {WAIT_LED, WAIT_DELAY, WAIT_LIVES, READY};
 SetupState setupState = WAIT_LED;
 
@@ -130,11 +130,13 @@ void terminalInputTask(void *params) {
           case WAIT_LED:
             if (val >= 1 && val <= 4) {
               activeButtons = val;
-              Serial.print("Antall LED valgt: "); Serial.println(activeButtons);
+              Serial.print("Antall LED valgt: ");
+              Serial.println(activeButtons);
               setupState = WAIT_DELAY;
               Serial.println("Skriv ønsket forsinkelse (ms, 500–10000):");
             } else Serial.println("Ugyldig (1–4). Prøv igjen:");
             break;
+
           case WAIT_DELAY:
             if (val >= 500 && val <= 10000) {
               xSemaphoreTake(delayMutex, portMAX_DELAY);
@@ -145,6 +147,7 @@ void terminalInputTask(void *params) {
               Serial.println("Skriv antall liv (1–10):");
             } else Serial.println("Ugyldig (500–10000). Prøv igjen:");
             break;
+
           case WAIT_LIVES:
             if (val >= 1 && val <= 10) {
               xSemaphoreTake(gameMutex, portMAX_DELAY);
@@ -157,6 +160,7 @@ void terminalInputTask(void *params) {
               Serial.println("Spillet starter!");
             } else Serial.println("Ugyldig (1–10). Prøv igjen:");
             break;
+
           default:
             break;
         }
@@ -166,7 +170,7 @@ void terminalInputTask(void *params) {
   }
 }
 
-// ---------- Setup ----------
+
 void setup() {
   Serial.begin(115200);
   Serial.println("--- FreeRTOS Reaksjonsspill ---");
