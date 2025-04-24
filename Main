@@ -142,7 +142,9 @@ void terminalInputTask(void *params) {
               xSemaphoreTake(delayMutex, portMAX_DELAY);
               userDelay = val;
               xSemaphoreGive(delayMutex);
-              Serial.print("Forsinkelse: "); Serial.print(userDelay); Serial.println(" ms");
+              Serial.print("Forsinkelse: "); 
+              Serial.print(userDelay); 
+              Serial.println(" ms");
               setupState = WAIT_LIVES;
               Serial.println("Skriv antall liv (1–10):");
             } else Serial.println("Ugyldig (500–10000). Prøv igjen:");
